@@ -1,0 +1,18 @@
+# Source-of-truth for the Python runtime dependencies of mcp-llm-wiki.
+# Pin to compatible release ranges here; the actual versions + transitive
+# hashes are frozen into requirements.txt by `pip-compile --generate-hashes
+# requirements.in`. Never hand-edit requirements.txt.
+
+# The official Model Context Protocol Python SDK.
+mcp>=1.2,<2.0
+
+# Frontmatter parsing for YAML headers on wiki pages.
+python-frontmatter>=1.1,<2.0
+
+# YAML emit for write-side frontmatter normalisation. python-frontmatter
+# pulls pyyaml transitively but we depend on it directly too.
+PyYAML>=6.0,<7.0
+
+# Anyio is the async runtime the MCP SDK uses. Explicit dep so
+# requirements.txt freezes a known-good version.
+anyio>=4.5,<5.0

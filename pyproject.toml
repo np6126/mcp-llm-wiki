@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcp-llm-wiki"
+version = "0.1.0"
+description = "MCP server that exposes git-backed LLM wikis as MCP tools"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "np6126" }]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries",
+]
+
+[project.scripts]
+mcp-llm-wiki = "mcp_llm_wiki.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra --strict-markers"
+filterwarnings = ["error"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "W", "S", "RET", "SIM"]
+# S101 (assert) is fine in tests; S603/S607 (subprocess) are unavoidable
+# for git invocation.
+ignore = ["S101", "S603", "S607"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S"]

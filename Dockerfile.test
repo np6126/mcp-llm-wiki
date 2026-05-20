@@ -1,0 +1,35 @@
+# Dockerfile.test — runs the full pytest suite as a build step.
+#
+# Why a Dockerfile and not `docker run`: the Gitea Actions runner shares
+# the host docker socket (DinD). Bind-mounting the job workspace into a
+# sibling container does not work — the workspace path only exists
+# inside the job container, not on the host the daemon sees. `docker
+# build` sidesteps this: the CLI streams the build context to the
+# daemon, so no host path is needed.
+#
+# A failing test fails the final RUN, which fails the build, which fails
+# the CI job. The resulting image is throwaway.
+
+FROM python:3.12-slim
+
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends git ripgrep && \
+    rm -rf /var/lib/apt/lists/*
+
+# A git identity is needed for the merge-driver / git_ops tests that
+# create commits. The conftest fixtures set per-repo identity, but a
+# global fallback avoids "Committer identity unknown" on edge paths.
+RUN git config --global user.email "ci@mcp-llm-wiki.local" && \
+    git config --global user.name "ci" && \
+    git config --global init.defaultBranch main
+
+WORKDIR /src
+
+# Hash-pinned dependency install first so this layer caches across runs
+# that only touch source files.
+COPY requirements-dev.txt ./
+RUN pip install --no-cache-dir --require-hashes -r requirements-dev.txt
+
+COPY . .
+
+RUN pytest -ra
