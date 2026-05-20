@@ -1,0 +1,7 @@
+# Test-time dependencies only.  Like requirements.in, freeze hashes
+# via `pip-compile --generate-hashes requirements-dev.in`.
+
+-r requirements.in
+
+pytest>=8.0,<10.0
+pytest-asyncio>=0.23,<2.0

@@ -1,0 +1,55 @@
+name: Test and build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/mcp-llm-wiki
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run test suite
+        # Dockerfile.test installs the hash-pinned deps and runs pytest as a
+        # build step, so a green `docker build` is a green test run.
+        run: docker build -f Dockerfile.test -t mcp-llm-wiki-test:${{ github.sha }} .
+
+  image:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image
+        run: |
+          docker build \
+            -f Containerfile \
+            -t ${{ env.IMAGE }}:latest \
+            -t ${{ env.IMAGE }}:${{ github.sha }} \
+            .
+
+      - name: Push image
+        run: |
+          docker push ${{ env.IMAGE }}:latest
+          docker push ${{ env.IMAGE }}:${{ github.sha }}
+
+      - name: Emit image digest
+        run: docker inspect --format='{{index .RepoDigests 0}}' ${{ env.IMAGE }}:${{ github.sha }}
