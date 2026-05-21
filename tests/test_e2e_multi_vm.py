@@ -20,7 +20,6 @@ fungible for the wire layer the way Gitea over HTTPS exposes it.
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -34,12 +33,6 @@ MERGE_DRIVERS = Path(__file__).resolve().parent.parent / "merge_drivers"
 
 def _run(cmd: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, cwd=cwd, check=check, capture_output=True, text=True)
-
-
-@pytest.fixture(scope="session", autouse=True)
-def require_git():
-    if shutil.which("git") is None:
-        pytest.skip("git binary not available in test env")
 
 
 def _make_clone(parent: Path, vm_name: str, bare: Path) -> Path:

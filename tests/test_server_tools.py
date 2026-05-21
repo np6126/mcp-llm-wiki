@@ -9,6 +9,7 @@ callables through FastMCP's tool-manager. Each registered tool gets:
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -123,8 +124,33 @@ async def test_wiki_read_raw(server):
     _, payload = await _call(server, "wiki_read_raw", wiki="test", path="note.txt")
     assert payload["size"] == len(b"raw text")
     import base64
+    import hashlib
 
     assert base64.b64decode(payload["content_base64"]) == b"raw text"
+    assert payload["etag"] == hashlib.sha256(b"raw text").hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_wiki_read_missing_page_returns_structured_error(server):
+    with pytest.raises(Exception, match="page_not_found"):
+        await _call(server, "wiki_read", wiki="test", page="concepts/ghost.md")
+
+
+@pytest.mark.asyncio
+async def test_wiki_read_raw_missing_source_returns_structured_error(server):
+    with pytest.raises(Exception, match="source_not_found"):
+        await _call(server, "wiki_read_raw", wiki="test", path="ghost.txt")
+
+
+@pytest.mark.asyncio
+async def test_wiki_search(server):
+    if shutil.which("rg") is None:
+        pytest.skip("ripgrep not available")
+    _, payload = await _call(server, "wiki_search", wiki="test", query="git server")
+    hits = payload["result"]
+    hit = next(h for h in hits if h["path"] == "wiki/entities/gitea.md")
+    assert hit["line"] > 0
+    assert "git server" in hit["snippet"]
 
 
 @pytest.mark.asyncio
@@ -152,6 +178,21 @@ async def test_readonly_wiki_blocks_write(server, tmp_path):
     # 'readme' is in wikis_readonly per the fixture.
     with pytest.raises(Exception, match="read_only"):
         await _call(server, "wiki_save", wiki="readme", page="x.md", content="hi")
+
+
+@pytest.mark.asyncio
+async def test_wiki_not_cloned_returns_error(populated_wiki):
+    # A wiki configured but with no working tree on disk.
+    config = Config(
+        root=populated_wiki,
+        wikis_rw=frozenset({"ghost"}),
+        wikis_readonly=frozenset(),
+        agent_identity="test-agent",
+        port=3100,
+    )
+    srv = server_mod.build_server(config)
+    with pytest.raises(Exception, match="wiki_not_cloned"):
+        await _call(srv, "wiki_list", wiki="ghost")
 
 
 def _ttl_server(populated_wiki: Path, ttl: int):
