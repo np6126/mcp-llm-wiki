@@ -14,7 +14,7 @@ from pathlib import Path
 
 import frontmatter  # type: ignore[import-untyped]
 
-from mcp_llm_wiki.path_safety import etag, resolve_within
+from mcp_llm_wiki.path_safety import PathSafetyError, etag, resolve_within
 
 # Match Obsidian-style wikilinks: [[page]] or [[page|alias]] or
 # [[page#heading]]. Strips alias / heading for the link target.
@@ -49,6 +49,18 @@ class PageContent:
     outgoing_links: list[str]
     """De-duplicated targets of [[wikilinks]] and Markdown md-links."""
     etag: str
+
+
+@dataclass
+class RawContent:
+    """Full return shape for `wiki_read_raw`."""
+
+    path: str
+    content: bytes
+    """Exact bytes of the source — the raw/ layer is never decoded."""
+    size: int
+    etag: str
+    """sha256 of `content`; the provenance handle for a page's `sources:`."""
 
 
 @dataclass
@@ -138,42 +150,52 @@ def read_page(wiki_dir: Path, page_rel: str) -> PageContent:
     )
 
 
-def read_raw(wiki_dir: Path, path_rel: str) -> bytes:
+def read_raw(wiki_dir: Path, path_rel: str) -> RawContent:
     """Read a source from `wiki_dir/raw/<path_rel>`.
 
     No frontmatter parsing, no decoding — the raw/ layer holds whatever
-    the operator placed there (PDFs, transcripts, etc.).
+    the operator placed there (PDFs, transcripts, etc.). The returned
+    `etag` identifies this source version; an agent records it in a
+    page's `sources:` frontmatter so `lint` can later detect removal or
+    drift of the source.
     """
     safe = resolve_within(wiki_dir / "raw", path_rel)
-    return safe.read_bytes()
+    data = safe.read_bytes()
+    return RawContent(path=path_rel, content=data, size=len(data), etag=etag(data))
 
 
 def search(wiki_dir: Path, query: str, limit: int = 50) -> list[SearchHit]:
     """ripgrep over `wiki_dir/wiki/`. Phase-1 search; FTS5 lands later.
 
     `query` is treated as a fixed string (no regex) for predictable
-    agent-facing semantics.
+    agent-facing semantics. Raises RuntimeError if ripgrep is not on
+    PATH or exits with an error.
     """
     base = wiki_dir / "wiki"
     if not base.is_dir() or not query:
         return []
-    result = subprocess.run(
-        [
-            "rg",
-            "--fixed-strings",
-            "--no-heading",
-            "--with-filename",
-            "--line-number",
-            "--max-count",
-            str(limit),
-            "--",
-            query,
-            str(base),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "rg",
+                "--fixed-strings",
+                "--no-heading",
+                "--with-filename",
+                "--line-number",
+                "--max-count",
+                str(limit),
+                "--",
+                query,
+                str(base),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "wiki_search needs ripgrep (rg) on PATH, but it was not found"
+        ) from exc
     if result.returncode not in (0, 1):
         # rg returns 1 on no-match; 2+ on real error.
         raise RuntimeError(f"ripgrep failed: {result.stderr}")
@@ -277,19 +299,108 @@ def build_graph(wiki_dir: Path) -> dict[str, list[str]]:
 _NON_CONTENT_PAGES = frozenset({"index.md", "log.md"})
 
 
+def _source_entries(metadata: dict) -> list[tuple[str, str | None]]:
+    """Extract `(raw-path, recorded-etag)` pairs from a page's `sources:`
+    frontmatter.
+
+    Each entry is a mapping `{path: <relative to raw/>, etag: <sha256>}`.
+    Tolerant of malformed input — anything that is not a list of such
+    mappings is ignored, so a hand-edited page never crashes the linter.
+    `etag` is optional: without it `source_missing` still works but
+    `source_drift` cannot be checked for that entry.
+    """
+    raw = metadata.get("sources")
+    if not isinstance(raw, list):
+        return []
+    entries: list[tuple[str, str | None]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        if not isinstance(path, str) or not path.strip():
+            continue
+        recorded = item.get("etag")
+        entries.append((path.strip(), recorded if isinstance(recorded, str) else None))
+    return entries
+
+
+def _check_sources(wiki_dir: Path, records: list[_PageRecord], report: LintReport) -> None:
+    """Provenance checks against the raw/ layer.
+
+    A page may declare the raw sources it was synthesised from in a
+    `sources:` frontmatter list. For pages that do, report `source_missing`
+    for a declared source that no longer exists and `source_drift` for one
+    whose bytes have changed since synthesis. Pages with no `sources:` list
+    are simply not provenance-tracked and are never flagged.
+
+    Source/page is many-to-one — one page is typically synthesised from
+    several sources — so `source_missing` is graded: its message states
+    how many sources survive, distinguishing a partial loss (re-derive
+    from the remainder) from a total loss (no surviving source).
+    """
+    etag_cache: dict[str, str | None] = {}
+
+    def current_etag(rel: str) -> str | None:
+        """sha256 of raw/<rel> as it stands now, or None if it cannot be
+        read (removed, a directory, or an unsafe path)."""
+        if rel not in etag_cache:
+            try:
+                safe = resolve_within(wiki_dir / "raw", rel)
+            except PathSafetyError:
+                etag_cache[rel] = None
+            else:
+                etag_cache[rel] = etag(safe.read_bytes()) if safe.is_file() else None
+        return etag_cache[rel]
+
+    for r in records:
+        entries = _source_entries(r.metadata)
+        if not entries:
+            continue
+        actual = {rel: current_etag(rel) for rel, _ in entries}
+        total = len(entries)
+        survivors = sum(1 for value in actual.values() if value is not None)
+        for rel, recorded in entries:
+            if actual[rel] is None:
+                tail = (
+                    f"{survivors} of {total} sources remain"
+                    if survivors
+                    else f"0 of {total} — page has no surviving source"
+                )
+                report.issues.append(
+                    LintIssue(
+                        kind="source_missing",
+                        path=r.rel,
+                        message=f"raw source no longer exists: raw/{rel} ({tail})",
+                    )
+                )
+            elif recorded is not None and recorded != actual[rel]:
+                report.issues.append(
+                    LintIssue(
+                        kind="source_drift",
+                        path=r.rel,
+                        message=f"raw source changed since synthesis: raw/{rel}",
+                    )
+                )
+
+
 def lint(wiki_dir: Path) -> LintReport:
-    """Deterministic structural drift checks. Never mutates.
+    """Deterministic mechanical drift checks. Never mutates.
 
     This is only the mechanically computable layer of linting — graph
-    topology over the wiki's pages. The semantic half of a Karpathy-style
-    health-check (contradictions between pages, claims a newer source
-    has superseded, concepts mentioned but lacking a page) needs LLM
-    judgement and is the agent's Lint workflow, not this.
+    topology over the pages plus provenance against the raw/ layer. The
+    semantic half of a Karpathy-style health-check (contradictions
+    between pages, claims a newer source has superseded, concepts
+    mentioned but lacking a page) needs LLM judgement and is the agent's
+    Lint workflow, not this.
 
-    Reports three kinds of issue:
+    Reports five kinds of issue:
       - `orphan`: a content page no other page links to
       - `broken_link`: an outgoing link whose target page does not exist
       - `unindexed`: a content page not linked from `index.md`
+      - `source_missing`: a raw source a page declares in its `sources:`
+        provenance list no longer exists in raw/
+      - `source_drift`: such a raw source's bytes changed since the page
+        was synthesised
     """
     report = LintReport()
     records = _walk_pages(wiki_dir)
@@ -332,6 +443,7 @@ def lint(wiki_dir: Path) -> LintReport:
                     )
                 )
 
+    _check_sources(wiki_dir, records, report)
     return report
 
 

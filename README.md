@@ -35,15 +35,45 @@ talks to it over HTTP-MCP and never touches the working trees directly.
 |---|---|---|
 | `wiki_list` | read-only | List pages with frontmatter summary |
 | `wiki_read` | read-only | Read a page (returns content + frontmatter + outgoing links + ETag) |
-| `wiki_read_raw` | read-only | Read from the immutable `raw/` source layer |
+| `wiki_read_raw` | read-only | Read from the immutable `raw/` source layer (returns content + ETag) |
 | `wiki_search` | read-only | Fixed-string search over wiki pages (ripgrep-backed; FTS5 hybrid planned) |
 | `wiki_save` | write (idempotent) | Upsert a page; atomic write + commit + push, ETag-guarded |
 | `wiki_log_append` | write (append) | Append a timestamped entry to `log.md` |
-| `wiki_lint` | read-only | Structural drift report (orphans, broken links, unindexed pages) — never mutates |
+| `wiki_lint` | read-only | Drift report (orphans, broken links, unindexed pages, removed/changed sources) — never mutates |
 | `wiki_graph` | read-only | Backlinks map (parses wikilinks + Markdown links) |
 
 These tools are primitives. The *workflows* that compose them — ingest,
 query, and lint — live in the agent's skill, not the server.
+
+## Operator CLIs
+
+Two operator-side commands ship with this repo, separate from the MCP
+server and never run in its container: `wiki-init` seeds a wiki's
+structure (and resets an existing one), and `wiki-clip` clips web
+sources into `raw/`.
+
+Install with [pipx](https://pipx.pypa.io/) — it puts the commands on
+your `PATH` in an isolated environment, sidestepping PEP 668 (the
+`externally-managed-environment` error a plain `pip install` hits on
+recent Debian/Ubuntu):
+
+```bash
+pipx install "."
+```
+
+That single command installs both `wiki-clip` and `wiki-init`, fully
+working — `wiki-clip`'s dependencies
+([markitdown](https://github.com/microsoft/markitdown) and PyYAML) are
+ordinary requirements, not an optional extra. Run `pipx ensurepath`
+once if `~/.local/bin` isn't on your `PATH`.
+
+Both commands are repo-agnostic — they take the target wiki repo as an
+argument (default: the current directory), so one install serves every
+wiki. Without `-e` the package is copied into pipx, so the
+`mcp-llm-wiki` checkout is disposable afterward; install editable
+(`pipx install -e "."`) only to hack on the tools. Uninstall with
+`pipx uninstall mcp-llm-wiki` — pipx keys on the package name, not the
+command names.
 
 ## Setting up a wiki
 
@@ -68,18 +98,19 @@ wiki-<topic>/
 write-contended hotspots through the merge-drivers that coalesce
 concurrent appends. The server installs the matching driver scripts
 into every clone automatically, so `.gitattributes` is all the repo
-needs. Seed a new wiki repo:
+needs. `wiki-init` (see [Operator CLIs](#operator-clis)) seeds that
+whole layout — clone the repo, run it, commit, push:
 
 ```bash
 git clone https://git.example.com/<org>/wiki-<topic>.git
 cd wiki-<topic>
-mkdir -p raw wiki
-touch raw/.gitkeep
-printf '# Index\n\n' > wiki/index.md
-printf '# Log\n\n' > log.md
-printf 'log.md merge=llm-wiki-log\nindex.md merge=llm-wiki-index\n' > .gitattributes
-git add -A && git commit -m "seed wiki structure" && git push
+wiki-init                       # creates raw/.gitkeep, wiki/index.md, log.md, .gitattributes
+git commit -m "seed wiki structure" && git push
 ```
+
+Run on a wiki that already has content, `wiki-init` resets it to the
+empty structure — listing what will be cleared and asking for
+confirmation first, and never rewriting git history.
 
 The server authenticates to the git host over HTTPS with an access
 token — no SSH keys. Give each consumer (each agent VM or deployment)
@@ -97,33 +128,31 @@ the same split, and the git host enforces it again as defence in depth.
 but never writes it, so a web page must be turned into a local Markdown
 file before the agent sees it.
 
-`wiki-clip` is that step — a small operator CLI shipped with this repo,
-the command-line equivalent of Karpathy's Obsidian Web Clipper:
+`wiki-clip` is that step — the command-line equivalent of Karpathy's
+Obsidian Web Clipper (install it via [Operator CLIs](#operator-clis)):
 
 ```bash
-pip install -e ".[clip]"          # pulls in markitdown
-wiki-clip path/to/wiki-repo https://example.com/some/page
+cd wiki-<topic>
+wiki-clip https://example.com/some/page
 ```
+
+To clip into a wiki elsewhere, pass its path as the first argument:
+`wiki-clip path/to/wiki-repo <url>`.
 
 It fetches the URL, converts the HTML to Markdown with
 [markitdown](https://github.com/microsoft/markitdown), and writes
-`raw/<slug>.md` with provenance frontmatter (`source_url`, `title`, `fetched`,
-`clipped_by`). It then `git add`s the file but does **not** commit — the
-operator reviews the clipped Markdown and commits, keeping `raw/` a
-curated layer. `--name` overrides the filename stem.
-
-markitdown is an optional dependency (the `clip` extra), kept out of
-the server container: clipping is an operator task, not a server
-capability.
+`raw/<slug>.md` with provenance frontmatter (`source_url`, `title`,
+`fetched`, `clipped_by`). It then `git add`s the file but does **not**
+commit — the operator reviews the clipped Markdown and commits, keeping
+`raw/` a curated layer. `--name` overrides the filename stem.
 
 ## Editing a wiki by hand
 
 A wiki is a normal git repo — edit it like one. Clone it, edit the
-Markdown in any editor, commit, and push. The server picks the changes
-up on its next read: reads refresh the working tree with a
-TTL-debounced `git pull --rebase`. Wikilinks (`[[page]]`) render
-natively in Obsidian and in VS Code with Foam; most git-host web views
-show them as plain text.
+Markdown in any editor, commit, and push; the server picks the change
+up on its next read. Wikilinks (`[[page]]`) render natively in Obsidian
+and in VS Code with Foam; most git-host web views show them as plain
+text.
 
 ## Linting
 
@@ -133,15 +162,17 @@ has done half the job.
 
 Detection has two layers, because drift comes in two kinds.
 
-**Structural drift** — pages nothing links to, links to pages renamed
-away, pages missing from the catalog — is graph topology. `wiki_lint`
-finds it deterministically:
+**Mechanical drift** — pages nothing links to, links to pages renamed
+away, pages missing from the catalog, raw sources removed or changed
+under a page — is deterministically computable. `wiki_lint` finds it:
 
 | Kind | Meaning |
 |---|---|
 | `orphan` | A content page no other page links to. |
 | `broken_link` | An outgoing link whose target page does not exist. |
 | `unindexed` | A content page not linked from `index.md`, the catalog. |
+| `source_missing` | A raw source a page was synthesised from no longer exists. |
+| `source_drift` | Such a raw source's bytes changed since the page was synthesised. |
 
 (`index.md` and `log.md` are exempt from the `orphan` and `unindexed`
 checks — they are structural, not content pages. A `broken_link` is
@@ -149,13 +180,23 @@ still reported against `index.md`: the catalog is exactly where links
 to renamed-away pages collect. The report is `{"issues": [{kind,
 path, message}, …], "clean": <bool>}`.)
 
+The two `source_*` checks are provenance checks. A page opts in by
+listing the raw sources it was built from in a `sources:` frontmatter
+block — each entry a `{path, etag}` pair, where `etag` is the value
+`wiki_read_raw` returned for that source. Pages with no `sources:`
+block are simply not provenance-tracked. Because a page is usually
+synthesised from several sources, `source_missing` is graded: its
+message states how many sources survive, so a partial loss (re-derive
+from the remainder) reads differently from a total loss.
+
 **Semantic drift** — contradictions, claims a newer source has
 superseded, concepts mentioned but lacking their own page, missing
 cross-references — cannot be computed; it takes an agent reading and
 judging the content.
 
 The agent then **remedies** each finding with `wiki_save` — relink an
-orphan, stub or drop a broken link, add a page to `index.md`, rewrite a
+orphan, stub or drop a broken link, add a page to `index.md`,
+re-synthesise a page whose source was removed or changed, rewrite a
 superseded claim. `wiki_lint` is read-only by design: a fix is a
 content change and belongs in `wiki_save` (sanitiser, ETag, commit),
 with the agent deciding *how*. The full detect-and-remedy loop is the
@@ -165,10 +206,10 @@ agent's *Lint* operation, defined in the wiki skill.
 
 Implemented and tested: all 8 tools, the sanitiser, path-safety, ETag
 optimistic concurrency, git mediation, and the `log.md` / `index.md`
-merge-drivers are in place and covered by the test suite (unit tests
-plus a multi-VM end-to-end suite). Pre-1.0 — interfaces may still
-shift. `wiki_search` is currently ripgrep-backed fixed-string matching;
-an FTS5 hybrid is planned.
+merge-drivers are in place and covered by the test suite — unit tests,
+git-integration tests, and a multi-VM end-to-end suite. Pre-1.0 —
+interfaces may still shift. `wiki_search` is currently ripgrep-backed
+fixed-string matching; an FTS5 hybrid is planned.
 
 ## Integration
 

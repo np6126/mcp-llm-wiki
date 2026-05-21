@@ -135,13 +135,20 @@ def build_server(config: Config) -> FastMCP:
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
         description=(
             "Read a wiki page. Returns body, frontmatter, outgoing links, "
-            "and an ETag the caller can quote in wiki_save."
+            "and an ETag the caller can quote in wiki_save. A missing page "
+            "fails with page_not_found."
         ),
     )
     def wiki_read(wiki: str, page: str) -> dict[str, Any]:
         _require_known(config, wiki)
         _refresh(config, wiki)
-        return wiki_io.page_content_dict(wiki_io.read_page(config.wiki_path(wiki), page))
+        try:
+            content = wiki_io.read_page(config.wiki_path(wiki), page)
+        except FileNotFoundError as exc:
+            raise WikiToolError(
+                f"page_not_found: '{page}' does not exist in wiki '{wiki}'"
+            ) from exc
+        return wiki_io.page_content_dict(content)
 
     @mcp.tool(
         name="wiki_read_raw",
@@ -149,17 +156,28 @@ def build_server(config: Config) -> FastMCP:
         description=(
             "Read a source from a wiki's raw/ layer. The raw layer is "
             "immutable from this server's perspective — there is no "
-            "write counterpart. Binary-safe (returns base64 + size)."
+            "write counterpart. Binary-safe (returns base64 + size); a "
+            "missing source fails with source_not_found. The returned "
+            "'etag' identifies this source version: record it in a page's "
+            "`sources:` frontmatter so wiki_lint can flag the page when "
+            "the source is later removed or changed."
         ),
     )
     def wiki_read_raw(wiki: str, path: str) -> dict[str, Any]:
         _require_known(config, wiki)
         _refresh(config, wiki)
-        data = wiki_io.read_raw(config.wiki_path(wiki), path)
+        try:
+            raw = wiki_io.read_raw(config.wiki_path(wiki), path)
+        except FileNotFoundError as exc:
+            raise WikiToolError(
+                f"source_not_found: '{path}' does not exist in the raw/ "
+                f"layer of wiki '{wiki}'"
+            ) from exc
         return {
-            "path": path,
-            "size": len(data),
-            "content_base64": base64.b64encode(data).decode("ascii"),
+            "path": raw.path,
+            "size": raw.size,
+            "etag": raw.etag,
+            "content_base64": base64.b64encode(raw.content).decode("ascii"),
         }
 
     @mcp.tool(
@@ -301,10 +319,13 @@ def build_server(config: Config) -> FastMCP:
         name="wiki_lint",
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
         description=(
-            "Structural drift report: orphan pages, broken links, and "
-            "pages missing from index.md. Deterministic, never mutates. "
-            "Semantic checks — contradictions, superseded claims — are "
-            "the agent's job; see the wiki skill."
+            "Drift report: orphan pages, broken links, "
+            "pages missing from index.md, and — for pages carrying a "
+            "`sources:` provenance list — raw sources that have been "
+            "removed (source_missing) or changed (source_drift). "
+            "Deterministic, never mutates. Semantic checks — "
+            "contradictions, superseded claims — are the agent's job; "
+            "see the wiki skill."
         ),
     )
     def wiki_lint(wiki: str) -> dict[str, Any]:

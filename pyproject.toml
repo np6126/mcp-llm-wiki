@@ -19,19 +19,23 @@ classifiers = [
   "Topic :: Software Development :: Libraries",
 ]
 
-[project.scripts]
-mcp-llm-wiki = "mcp_llm_wiki.server:main"
-wiki-clip = "mcp_llm_wiki.clip:main"
-
-# Optional operator tooling. `wiki-clip` (the raw/ web-source clipper) is
-# not part of the MCP server and is never installed into the container —
-# its deps live here, out of requirements.in. Install with:
-#     pip install -e ".[clip]"
-[project.optional-dependencies]
-clip = [
+# Runtime deps of the operator CLIs (wiki-clip needs these; wiki-init is
+# pure stdlib). Mandatory, not an optional extra — an extra would leave a
+# non-working wiki-clip on the PATH of anyone who installed without it.
+# The server's deps are separate; see the [project.scripts] note below.
+dependencies = [
   "markitdown>=0.1.5,<0.2",
   "PyYAML>=6.0,<7.0",
 ]
+
+[project.scripts]
+# The MCP server is intentionally not a console script — it runs in its
+# container as `python -m mcp_llm_wiki.server` (see entrypoint.sh), and
+# its runtime dependencies live in requirements.txt, not in this file.
+# Exposing it as a command would only put a broken `mcp-llm-wiki` on the
+# PATH of anyone who pipx-installs the package for the operator CLIs.
+wiki-clip = "mcp_llm_wiki.clip:main"
+wiki-init = "mcp_llm_wiki.init:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

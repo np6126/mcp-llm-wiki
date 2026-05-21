@@ -46,6 +46,13 @@ def test_rejects_current_dir_segments(tmp_path: Path):
         resolve_within(tmp_path, "./page.md")
 
 
+def test_rejects_empty_path_segment(tmp_path: Path):
+    # A `//` collapses to an empty path component — reject it rather than
+    # let PurePosixPath silently normalise it away.
+    with pytest.raises(PathSafetyError, match="empty segment"):
+        resolve_within(tmp_path, "a//b.md")
+
+
 def test_rejects_symlink_at_leaf(tmp_path: Path):
     (tmp_path / "target").write_text("x")
     (tmp_path / "link.md").symlink_to(tmp_path / "target")
@@ -91,6 +98,24 @@ def test_resolves_under_symlinked_root(tmp_path: Path):
     resolved = resolve_within(linked, "page.md")
     # Both forms should resolve to the same real location.
     assert resolved.resolve() == (real / "page.md").resolve()
+
+
+def test_backstop_rejects_path_resolving_outside_root(tmp_path: Path, monkeypatch):
+    """The post-walk containment check is a backstop: it catches a path
+    that resolves outside root even though the symlink-free walk passed.
+    That cannot arise on a normal filesystem, so the only way to exercise
+    it is to force the leaf's resolve() to return an outside location.
+    """
+    real_resolve = Path.resolve
+
+    def fake_resolve(self, *args, **kwargs):
+        if self.name == "escapee":
+            return Path("/somewhere/else")
+        return real_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fake_resolve)
+    with pytest.raises(PathSafetyError, match="escapes root"):
+        resolve_within(tmp_path, "escapee")
 
 
 def test_etag_is_deterministic():
