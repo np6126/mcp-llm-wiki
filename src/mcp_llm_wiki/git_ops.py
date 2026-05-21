@@ -115,7 +115,8 @@ def stage_commit_push(
 
     Paths are relative to `wiki_dir`. `author` is the in-VM agent
     identity; we render it as `name <name@llm-wiki.local>` for the
-    commit-author header (forge web UIs key author identity on email).
+    commit-author header (git hosting web UIs key author identity on
+    email).
     """
     _run(["git", "add", "--", *paths], wiki_dir)
     if not _index_dirty(wiki_dir, paths):
