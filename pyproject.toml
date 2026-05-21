@@ -21,6 +21,17 @@ classifiers = [
 
 [project.scripts]
 mcp-llm-wiki = "mcp_llm_wiki.server:main"
+wiki-clip = "mcp_llm_wiki.clip:main"
+
+# Optional operator tooling. `wiki-clip` (the raw/ web-source clipper) is
+# not part of the MCP server and is never installed into the container —
+# its deps live here, out of requirements.in. Install with:
+#     pip install -e ".[clip]"
+[project.optional-dependencies]
+clip = [
+  "markitdown>=0.1.5,<0.2",
+  "PyYAML>=6.0,<7.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
