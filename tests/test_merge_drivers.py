@@ -153,6 +153,68 @@ def test_log_md_merge_preserves_header(two_clones):
     assert merged.startswith("# Log\n")
 
 
+def test_log_md_merge_unions_heading_format_entries(two_clones):
+    # The wiki_log_append format: `## [timestamp] entry` heading lines.
+    _, alice, bob = two_clones
+
+    log_a = alice / "log.md"
+    log_a.write_text(
+        log_a.read_text()
+        + "## [2026-05-21T10:00:00Z] ingest | source A\n"
+        + "## [2026-05-21T10:30:00Z] query | question Q1\n"
+    )
+    _run(["git", "add", "log.md"], alice)
+    _run(["git", "commit", "--quiet", "-m", "alice: append two"], alice)
+    _run(["git", "push", "--quiet"], alice)
+
+    log_b = bob / "log.md"
+    log_b.write_text(
+        log_b.read_text() + "## [2026-05-21T10:15:00Z] ingest | source B\n"
+    )
+    _run(["git", "add", "log.md"], bob)
+    _run(["git", "commit", "--quiet", "-m", "bob: append one"], bob)
+
+    result = _run(["git", "pull", "--no-rebase", "--quiet", "--no-edit"], bob, check=False)
+    assert result.returncode == 0, result.stderr
+
+    merged = log_b.read_text()
+    lines = [line for line in merged.splitlines() if line.startswith("## [")]
+    assert lines == [
+        "## [2026-05-21T10:00:00Z] ingest | source A",
+        "## [2026-05-21T10:15:00Z] ingest | source B",
+        "## [2026-05-21T10:30:00Z] query | question Q1",
+    ]
+
+
+def test_log_md_merge_keeps_both_old_and_new_format(two_clones):
+    # During the format transition a log.md holds both bare `[...]`
+    # entries and new `## [...]` heading entries. The driver must
+    # recognise both as entries and never silently drop the old ones.
+    _, alice, bob = two_clones
+
+    (alice / "log.md").write_text(
+        (alice / "log.md").read_text()
+        + "[2026-05-20T09:00:00Z] legacy ingest | old source\n"
+    )
+    _run(["git", "add", "log.md"], alice)
+    _run(["git", "commit", "--quiet", "-m", "alice: legacy entry"], alice)
+    _run(["git", "push", "--quiet"], alice)
+
+    (bob / "log.md").write_text(
+        (bob / "log.md").read_text()
+        + "## [2026-05-21T09:00:00Z] ingest | new source\n"
+    )
+    _run(["git", "add", "log.md"], bob)
+    _run(["git", "commit", "--quiet", "-m", "bob: new entry"], bob)
+    _run(["git", "pull", "--no-rebase", "--quiet", "--no-edit"], bob, check=False)
+
+    merged = (bob / "log.md").read_text()
+    # Both formats survive — neither absorbed into the header or dropped.
+    assert "[2026-05-20T09:00:00Z] legacy ingest | old source" in merged
+    assert "## [2026-05-21T09:00:00Z] ingest | new source" in merged
+    assert merged.startswith("# Log\n")
+
+
 def test_index_md_merge_unions_unique_lines(two_clones):
     _, alice, bob = two_clones
 

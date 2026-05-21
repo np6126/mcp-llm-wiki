@@ -210,9 +210,9 @@ async def test_concurrent_log_appends_merge(two_vms):
     log_text = _run(["git", "show", "main:log.md"], bare).stdout
     assert "source-A" in log_text
     assert "source-B" in log_text
-    # Both authored under their respective VM identities.
-    assert "wiki-bot-vmA" in log_text
-    assert "wiki-bot-vmB" in log_text
+    # The merge driver sorts entries by their ISO timestamp; A was
+    # appended before B, so A's line precedes B's.
+    assert log_text.index("source-A") < log_text.index("source-B")
 
 
 @pytest.mark.asyncio

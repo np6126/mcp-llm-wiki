@@ -246,11 +246,10 @@ async def test_wiki_log_append_writes_timestamped_line(server, wiki_workspace):
     # Header preserved + new entry appended.
     assert log_text.startswith("# Log\n")
     assert "ingest | source-A" in log_text
-    # Each entry line starts with [ISO-timestamp].
-    entry_lines = [line for line in log_text.splitlines() if line.startswith("[")]
+    # Each entry line is `## [ISO-timestamp] <entry text>`.
+    entry_lines = [ln for ln in log_text.splitlines() if ln.startswith("## [")]
     assert len(entry_lines) >= 1
-    # Author appears in the entry body, not just in git commit-author.
-    assert "wiki-bot-test" in entry_lines[-1]
+    assert entry_lines[-1].endswith("ingest | source-A")
     # Pushed.
     log_oneline = _run(["git", "log", "--oneline", "main"], bare).stdout
     assert "log: append entry" in log_oneline

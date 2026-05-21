@@ -137,8 +137,7 @@ def sanitize(text: str) -> tuple[str, SanitizeReport]:
     # alt text alone, so the page still reads naturally.
     def _data_image_repl(match: re.Match[str]) -> str:
         report.data_images += 1
-        alt = match.group(1)
-        return alt
+        return match.group(1)
 
     text = _MD_IMAGE_RE.sub(_data_image_repl, text)
 
