@@ -111,24 +111,110 @@ def test_log_md_merge_unions_and_sorts(two_clones):
     ]
 
 
-def test_log_md_merge_deduplicates_identical_entries(two_clones):
+def test_log_md_merge_keeps_ancestor_entry_once(two_clones):
+    # An entry both sides inherit through shared history is present in
+    # the merge ancestor, so the 3-way union nets it to a single copy.
+    # This is the legitimate dedupe the driver must still perform.
     _, alice, bob = two_clones
 
-    same = "[2026-05-20T11:00:00Z] both ingest | same source\n"
+    shared = "## [2026-05-20T11:00:00Z] both ingest | same source"
 
-    (alice / "log.md").write_text((alice / "log.md").read_text() + same)
+    # Alice writes the entry and pushes; bob pulls it. It is now in
+    # the common history of any later divergence.
+    (alice / "log.md").write_text((alice / "log.md").read_text() + shared + "\n")
     _run(["git", "add", "log.md"], alice)
-    _run(["git", "commit", "--quiet", "-m", "alice: dup-test"], alice)
+    _run(["git", "commit", "--quiet", "-m", "alice: shared entry"], alice)
+    _run(["git", "push", "--quiet"], alice)
+    _run(["git", "pull", "--quiet"], bob)
+
+    # Each side now appends a distinct entry on top of the shared one.
+    (alice / "log.md").write_text(
+        (alice / "log.md").read_text() + "## [2026-05-20T12:00:00Z] alice only\n"
+    )
+    _run(["git", "add", "log.md"], alice)
+    _run(["git", "commit", "--quiet", "-m", "alice: more"], alice)
     _run(["git", "push", "--quiet"], alice)
 
-    (bob / "log.md").write_text((bob / "log.md").read_text() + same)
+    (bob / "log.md").write_text(
+        (bob / "log.md").read_text() + "## [2026-05-20T12:30:00Z] bob only\n"
+    )
     _run(["git", "add", "log.md"], bob)
-    _run(["git", "commit", "--quiet", "-m", "bob: dup-test"], bob)
+    _run(["git", "commit", "--quiet", "-m", "bob: more"], bob)
     _run(["git", "pull", "--no-rebase", "--quiet", "--no-edit"], bob, check=False)
 
     merged = (bob / "log.md").read_text()
-    occurrences = merged.count(same.strip())
-    assert occurrences == 1
+    assert merged.count(shared) == 1
+
+
+def test_log_md_merge_keeps_overlapping_independent_duplicate(two_clones):
+    # When the driver *is* invoked — each side also carries a distinct
+    # entry, so the merge is a genuine conflict — an identical entry
+    # that both sides appended independently (absent from the ancestor)
+    # must be kept twice. A blanket `sort -u` would drop one copy.
+    #
+    # Note: this does NOT cover two sides whose *only* change is the
+    # same identical line. Git resolves that before any driver runs
+    # (identical change on both sides / patch-id cherry-pick skip), so
+    # that case cannot be fixed in the merge driver at all.
+    _, alice, bob = two_clones
+
+    dup = "## [2026-05-20T11:00:00Z] both ingest | same source"
+
+    (alice / "log.md").write_text(
+        (alice / "log.md").read_text()
+        + dup + "\n"
+        + "## [2026-05-20T11:30:00Z] alice unique\n"
+    )
+    _run(["git", "add", "log.md"], alice)
+    _run(["git", "commit", "--quiet", "-m", "alice: append"], alice)
+    _run(["git", "push", "--quiet"], alice)
+
+    (bob / "log.md").write_text(
+        (bob / "log.md").read_text()
+        + dup + "\n"
+        + "## [2026-05-20T12:00:00Z] bob unique\n"
+    )
+    _run(["git", "add", "log.md"], bob)
+    _run(["git", "commit", "--quiet", "-m", "bob: append"], bob)
+    _run(["git", "pull", "--no-rebase", "--quiet", "--no-edit"], bob, check=False)
+
+    merged = (bob / "log.md").read_text()
+    assert merged.count(dup) == 2
+    assert "## [2026-05-20T11:30:00Z] alice unique" in merged
+    assert "## [2026-05-20T12:00:00Z] bob unique" in merged
+
+
+def test_log_md_merge_orders_mixed_format_by_timestamp(two_clones):
+    # A mixed-format log must stay in timestamp order: the `## `
+    # heading prefix must not sort a newer new-format entry ahead of
+    # an older legacy bare entry (`#` 0x23 sorts before `[` 0x5B).
+    _, alice, bob = two_clones
+
+    # Alice: a legacy bare entry that is chronologically the earliest.
+    (alice / "log.md").write_text(
+        (alice / "log.md").read_text() + "[2026-05-19T09:00:00Z] legacy earliest\n"
+    )
+    _run(["git", "add", "log.md"], alice)
+    _run(["git", "commit", "--quiet", "-m", "alice: legacy"], alice)
+    _run(["git", "push", "--quiet"], alice)
+
+    # Bob: a new-format heading entry that is chronologically latest.
+    (bob / "log.md").write_text(
+        (bob / "log.md").read_text() + "## [2026-05-22T09:00:00Z] heading latest\n"
+    )
+    _run(["git", "add", "log.md"], bob)
+    _run(["git", "commit", "--quiet", "-m", "bob: heading"], bob)
+    _run(["git", "pull", "--no-rebase", "--quiet", "--no-edit"], bob, check=False)
+
+    merged = (bob / "log.md").read_text()
+    entries = [
+        ln for ln in merged.splitlines()
+        if ln.startswith("[") or ln.startswith("## [")
+    ]
+    assert entries == [
+        "[2026-05-19T09:00:00Z] legacy earliest",
+        "## [2026-05-22T09:00:00Z] heading latest",
+    ]
 
 
 def test_log_md_merge_preserves_header(two_clones):

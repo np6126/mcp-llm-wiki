@@ -216,6 +216,29 @@ async def test_concurrent_log_appends_merge(two_vms):
 
 
 @pytest.mark.asyncio
+async def test_concurrent_identical_log_appends_both_survive(two_vms):
+    """Both VMs append a log entry with byte-identical text. The
+    per-entry nonce keeps the two lines distinct, so neither commit
+    looks like a cherry-pick of the other and both appends survive the
+    rebase. Without the nonce the lines would be identical, git would
+    drop one commit as an already-applied patch, and one append would
+    be silently lost.
+    """
+    vm_a, vm_b, bare = two_vms
+
+    await _call(vm_a, "wiki_log_append", wiki="test", entry="ingest | same source")
+    await _call(vm_b, "wiki_log_append", wiki="test", entry="ingest | same source")
+
+    log_text = _run(["git", "show", "main:log.md"], bare).stdout
+    entry_lines = [ln for ln in log_text.splitlines() if ln.startswith("## [")]
+    # Both appends present — neither dropped as a duplicate patch.
+    assert len(entry_lines) == 2
+    # Same entry text, distinct lines: the nonce is what differs.
+    assert entry_lines[0] != entry_lines[1]
+    assert all(ln.endswith("ingest | same source") for ln in entry_lines)
+
+
+@pytest.mark.asyncio
 async def test_human_edit_visible_to_vm(two_vms, tmp_path):
     """Operator on their laptop git-clones, edits a page, pushes.
     Next wiki_save in a VM does a pull-rebase and the agent then sees
