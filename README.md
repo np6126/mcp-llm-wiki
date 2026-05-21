@@ -36,7 +36,7 @@ talks to it over HTTP-MCP and never touches the working trees directly.
 | `wiki_list` | read-only | List pages with frontmatter summary |
 | `wiki_read` | read-only | Read a page (returns content + frontmatter + outgoing links + ETag) |
 | `wiki_read_raw` | read-only | Read from the immutable `raw/` source layer (returns content + ETag) |
-| `wiki_search` | read-only | Fixed-string search over wiki pages (ripgrep-backed; FTS5 hybrid planned) |
+| `wiki_search` | read-only | Fixed-string search over wiki pages (ripgrep-backed) |
 | `wiki_save` | write (idempotent) | Upsert a page; atomic write + commit + push, ETag-guarded |
 | `wiki_log_append` | write (append) | Append a timestamped entry to `log.md` |
 | `wiki_lint` | read-only | Drift report (orphans, broken links, unindexed pages, removed/changed sources) — never mutates |
@@ -208,8 +208,7 @@ Implemented and tested: all 8 tools, the sanitiser, path-safety, ETag
 optimistic concurrency, git mediation, and the `log.md` / `index.md`
 merge-drivers are in place and covered by the test suite — unit tests,
 git-integration tests, and a multi-VM end-to-end suite. Pre-1.0 —
-interfaces may still shift. `wiki_search` is currently ripgrep-backed
-fixed-string matching; an FTS5 hybrid is planned.
+interfaces may still shift.
 
 ## Integration
 
