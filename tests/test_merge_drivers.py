@@ -8,7 +8,6 @@ sort / dedupe behaviour by triggering an actual merge.
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -349,9 +348,3 @@ def test_merge_drivers_executable():
         assert path.exists(), f"missing {path}"
         # Owner exec bit at minimum.
         assert path.stat().st_mode & 0o100
-
-
-@pytest.fixture(scope="session", autouse=True)
-def require_git():
-    if shutil.which("git") is None:
-        pytest.skip("git binary not available in test env")

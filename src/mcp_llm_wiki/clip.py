@@ -11,9 +11,6 @@ Obsidian Web Clipper.
 It writes raw/<slug>.md with provenance frontmatter and `git add`s it.
 It deliberately does NOT commit or push: the operator reviews the
 clipped Markdown and commits, keeping raw/ a curated layer.
-
-markitdown is an optional dependency — install the `clip` extra:
-    pip install -e ".[clip]"
 """
 
 from __future__ import annotations
@@ -75,7 +72,9 @@ def fetch(url: str) -> bytes:
 
 def to_markdown(html: bytes, url: str) -> tuple[str, str]:
     """Convert fetched HTML to (markdown_body, title) via markitdown."""
-    from markitdown import MarkItDown  # optional dep — see the `clip` extra
+    # markitdown is a heavy import — load it at point of use so `wiki-clip
+    # --help` and argument errors stay fast.
+    from markitdown import MarkItDown
 
     result = MarkItDown().convert_stream(io.BytesIO(html), file_extension=".html", url=url)
     body = (result.markdown or result.text_content or "").strip()
@@ -120,7 +119,13 @@ def main(argv: list[str] | None = None) -> int:
         prog="wiki-clip",
         description="Clip a web source into a wiki's raw/ layer (Karpathy LLM-wiki).",
     )
-    parser.add_argument("wiki_dir", type=Path, help="path to a local wiki working tree")
+    parser.add_argument(
+        "wiki_dir",
+        type=Path,
+        nargs="?",
+        default=Path.cwd(),
+        help="path to a local wiki working tree (default: current directory)",
+    )
     parser.add_argument("url", help="http(s) source URL to clip")
     parser.add_argument("--name", help="override the raw/<name>.md filename stem")
     args = parser.parse_args(argv)
@@ -132,14 +137,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         target = clip(args.wiki_dir, args.url, name=args.name)
     except ModuleNotFoundError as exc:
-        if exc.name == "markitdown":
-            print(
-                "wiki-clip: markitdown is required — install the clip extra:\n"
-                "  pip install -e '.[clip]'",
-                file=sys.stderr,
-            )
-        else:
-            print(f"wiki-clip: missing dependency: {exc}", file=sys.stderr)
+        print(
+            f"wiki-clip: missing dependency '{exc.name}' — the mcp-llm-wiki "
+            "install is incomplete; reinstall it.",
+            file=sys.stderr,
+        )
         return 1
     except (ValueError, urllib.error.URLError) as exc:
         print(f"wiki-clip: {exc}", file=sys.stderr)

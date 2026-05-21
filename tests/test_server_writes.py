@@ -12,7 +12,6 @@ configured as a writable wiki.
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -84,12 +83,6 @@ def server(wiki_workspace):
 
 async def _call(server, tool: str, **kwargs):
     return await server.call_tool(tool, kwargs)
-
-
-@pytest.fixture(scope="session", autouse=True)
-def require_git():
-    if shutil.which("git") is None:
-        pytest.skip("git binary not available in test env")
 
 
 @pytest.mark.asyncio
@@ -273,3 +266,22 @@ async def test_wiki_log_append_sanitises_entry(server, wiki_workspace):
 async def test_wiki_log_append_rejects_empty(server):
     with pytest.raises(Exception, match="empty_entry"):
         await _call(server, "wiki_log_append", wiki="test", entry="   ")
+
+
+@pytest.mark.asyncio
+async def test_wiki_log_append_fixes_missing_trailing_newline(server, wiki_workspace):
+    wiki_root, _ = wiki_workspace
+    wiki = wiki_root / "test"
+    log_path = wiki / "log.md"
+    # Commit a log.md whose last line has no trailing newline.
+    log_path.write_text("# Log\n\n## [2026-05-01T00:00:00Z aaa] earlier")
+    _run(["git", "add", "log.md"], wiki)
+    _run(["git", "commit", "--quiet", "-m", "log without trailing newline"], wiki)
+    _run(["git", "push", "--quiet"], wiki)
+
+    await _call(server, "wiki_log_append", wiki="test", entry="later entry")
+
+    text = log_path.read_text()
+    # The new entry starts its own line — not glued onto "earlier".
+    assert "] earlier\n## [" in text
+    assert text.rstrip().endswith("later entry")

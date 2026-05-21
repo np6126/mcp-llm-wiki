@@ -9,8 +9,10 @@ a fake module.
 
 from __future__ import annotations
 
+import http.server
 import subprocess
 import sys
+import threading
 import types
 from datetime import datetime
 from pathlib import Path
@@ -61,6 +63,11 @@ def test_slugify_truncates_and_trims():
     assert len(slug) <= 60
     assert not slug.startswith("_")
     assert not slug.endswith("_")
+
+
+def test_slugify_hard_cuts_a_single_overlong_word():
+    # No word boundary to truncate on — the lone word is hard-cut to the cap.
+    assert clip.slugify("x" * 80) == "x" * 60
 
 
 # --- build_raw_document ----------------------------------------------------
@@ -204,6 +211,47 @@ def test_fetch_rejects_non_http_scheme(bad):
         clip.fetch(bad)
 
 
+# --- fetch over a real local HTTP server -----------------------------------
+
+_SERVED_BODY = b"<html>hello from the wiki-clip test server</html>"
+
+
+class _FetchHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.end_headers()
+        self.wfile.write(_SERVED_BODY)
+
+    def log_message(self, *args):
+        pass  # keep the test output quiet
+
+
+@pytest.fixture
+def http_url():
+    """A throwaway localhost HTTP server; yields its base URL."""
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), _FetchHandler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{httpd.server_address[1]}/"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join()
+
+
+def test_fetch_retrieves_response_body(http_url):
+    assert clip.fetch(http_url) == _SERVED_BODY
+
+
+def test_fetch_rejects_oversize_response(http_url, monkeypatch):
+    # Shrink the cap below the served body so the size guard trips.
+    monkeypatch.setattr(clip, "_MAX_FETCH_BYTES", 8)
+    with pytest.raises(ValueError, match="larger than"):
+        clip.fetch(http_url)
+
+
 # --- main ------------------------------------------------------------------
 
 
@@ -232,4 +280,31 @@ def test_main_reports_missing_markitdown(wiki_repo, monkeypatch, capsys):
     monkeypatch.setattr(clip, "to_markdown", _no_markitdown)
     rc = clip.main([str(wiki_repo), "https://x.com"])
     assert rc == 1
-    assert "clip extra" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "missing dependency" in err and "markitdown" in err
+
+
+def test_main_reports_git_add_failure(wiki_repo, monkeypatch, capsys):
+    monkeypatch.setattr(clip, "fetch", lambda url: b"<html></html>")
+    monkeypatch.setattr(clip, "to_markdown", lambda html, url: ("body", "Title"))
+    real_run = clip.subprocess.run
+
+    def _run(cmd, *args, **kwargs):
+        if cmd[:2] == ["git", "add"]:
+            raise subprocess.CalledProcessError(1, cmd, stderr="git add boom")
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(clip.subprocess, "run", _run)
+    rc = clip.main([str(wiki_repo), "https://x.com"])
+    assert rc == 1
+    assert "git add failed" in capsys.readouterr().err
+
+
+def test_main_defaults_wiki_dir_to_cwd(wiki_repo, monkeypatch):
+    # Invoked with only a URL, the wiki repo defaults to the current directory.
+    monkeypatch.setattr(clip, "fetch", lambda url: b"<html>x</html>")
+    monkeypatch.setattr(clip, "to_markdown", lambda html, url: ("body", "Some Title"))
+    monkeypatch.chdir(wiki_repo)
+    rc = clip.main(["https://example.com/page"])
+    assert rc == 0
+    assert (wiki_repo / "raw" / "some_title.md").is_file()

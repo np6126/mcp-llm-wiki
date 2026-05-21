@@ -8,12 +8,21 @@ The two heavy-weights here:
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
 from mcp_llm_wiki.config import Config
+
+
+@pytest.fixture(scope="session", autouse=True)
+def require_git():
+    """Skip the suite if git is unavailable — every integration test
+    shells out to it."""
+    if shutil.which("git") is None:
+        pytest.skip("git binary not available in test env")
 
 
 def _run(cmd: list[str], cwd: Path) -> None:
