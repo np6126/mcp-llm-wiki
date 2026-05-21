@@ -12,7 +12,7 @@
 #   4. exec the Python MCP server.
 #
 # Failure modes:
-#   - Gitea unreachable on first clone: log and retry indefinitely with
+#   - Git host unreachable on first clone: log and retry indefinitely with
 #     backoff. Pod stays up so consumers see a clean MCP error, not a
 #     crash-loop.
 #   - Token missing: hard-fail (clearly misconfigured operator setup).
@@ -20,10 +20,10 @@
 set -euo pipefail
 
 : "${AGENT_LLM_WIKI_URL:?AGENT_LLM_WIKI_URL is required (set via sync-podman-secrets)}"
-: "${AGENT_LLM_WIKI_USER:?AGENT_LLM_WIKI_USER is required (Gitea service account name)}"
-: "${AGENT_LLM_WIKI_TOKEN:?AGENT_LLM_WIKI_TOKEN is required (Gitea API token)}"
+: "${AGENT_LLM_WIKI_USER:?AGENT_LLM_WIKI_USER is required (git-host service account name)}"
+: "${AGENT_LLM_WIKI_TOKEN:?AGENT_LLM_WIKI_TOKEN is required (git-host API token)}"
 
-# Owner namespace the wiki repos live under. This is usually a Gitea org
+# Owner namespace the wiki repos live under. This is usually a git-host org
 # (e.g. a team), distinct from AGENT_LLM_WIKI_USER which is the service
 # account used only for auth + commit identity — that account is just a
 # collaborator on the wiki repos, not their owner. Defaults to
@@ -35,7 +35,7 @@ MCP_LLM_WIKI_ROOT="${MCP_LLM_WIKI_ROOT:-/wikis}"
 MCP_LLM_WIKI_MERGE_DRIVERS="${MCP_LLM_WIKI_MERGE_DRIVERS:-/opt/mcp-llm-wiki/merge_drivers}"
 MCP_LLM_WIKI_PORT="${MCP_LLM_WIKI_PORT:-3100}"
 
-git config --global user.email "${AGENT_LLM_WIKI_USER}@gitea.local"
+git config --global user.email "${AGENT_LLM_WIKI_USER}@llm-wiki.local"
 git config --global user.name "${AGENT_LLM_WIKI_USER}"
 git config --global init.defaultBranch main
 git config --global pull.rebase true

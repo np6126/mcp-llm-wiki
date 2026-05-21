@@ -86,11 +86,12 @@ async def test_annotations_present(server):
         assert by_name[name].annotations is not None
         assert by_name[name].annotations.readOnlyHint is True
 
-    # wiki_save is idempotent + non-destructive
+    # wiki_save is idempotent; an etag-less upsert can overwrite a page
+    # wholesale, so it is flagged destructive.
     save = by_name["wiki_save"]
     assert save.annotations.readOnlyHint is False
     assert save.annotations.idempotentHint is True
-    assert save.annotations.destructiveHint is False
+    assert save.annotations.destructiveHint is True
 
     # wiki_log_append is non-idempotent
     log_t = by_name["wiki_log_append"]

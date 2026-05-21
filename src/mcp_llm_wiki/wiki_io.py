@@ -10,7 +10,6 @@ from __future__ import annotations
 import re
 import subprocess
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 
 import frontmatter  # type: ignore[import-untyped]
@@ -275,23 +274,52 @@ def build_graph(wiki_dir: Path) -> dict[str, list[str]]:
     return backlinks
 
 
-def lint(wiki_dir: Path, stale_days: int = 180) -> LintReport:
-    """Heuristic-only drift checks. Never mutates.
+_NON_CONTENT_PAGES = frozenset({"index.md", "log.md"})
 
-    Reports three kinds of issues:
-      - `orphan`: a page no other page links to (excluding `index.md`)
-      - `broken_link`: outgoing wikilink whose target page does not exist
-      - `stale`: page's `updated:` is older than `stale_days`
+
+def lint(wiki_dir: Path) -> LintReport:
+    """Deterministic structural drift checks. Never mutates.
+
+    This is only the mechanically computable layer of linting — graph
+    topology over the wiki's pages. The semantic half of a Karpathy-style
+    health-check (contradictions between pages, claims a newer source
+    has superseded, concepts mentioned but lacking a page) needs LLM
+    judgement and is the agent's Lint workflow, not this.
+
+    Reports three kinds of issue:
+      - `orphan`: a content page no other page links to
+      - `broken_link`: an outgoing link whose target page does not exist
+      - `unindexed`: a content page not linked from `index.md`
     """
     report = LintReport()
     records = _walk_pages(wiki_dir)
     by_stem, backlinks = _link_maps(records)
-    now = datetime.now(timezone.utc)
+
+    # A page is "indexed" when `index.md` (the catalog) links to it.
+    # With no index.md at all, skip the check rather than flag every
+    # page — a missing catalog is a separate, structural problem.
+    index_records = [r for r in records if Path(r.rel).name == "index.md"]
+    index_stems = (
+        {Path(t).stem for r in index_records for t in r.outgoing_links}
+        if index_records
+        else None
+    )
 
     for r in records:
-        if Path(r.rel).name != "index.md" and not backlinks.get(r.rel):
+        is_content = Path(r.rel).name not in _NON_CONTENT_PAGES
+
+        if is_content and not backlinks.get(r.rel):
             report.issues.append(
                 LintIssue(kind="orphan", path=r.rel, message=f"no inbound links to {r.rel}")
+            )
+
+        if is_content and index_stems is not None and r.stem not in index_stems:
+            report.issues.append(
+                LintIssue(
+                    kind="unindexed",
+                    path=r.rel,
+                    message=f"not listed in index.md: {r.rel}",
+                )
             )
 
         for target in r.outgoing_links:
@@ -304,34 +332,7 @@ def lint(wiki_dir: Path, stale_days: int = 180) -> LintReport:
                     )
                 )
 
-        updated = r.metadata.get("updated")
-        if updated:
-            try:
-                dt = _parse_date(str(updated))
-            except ValueError:
-                continue
-            if (now - dt).days > stale_days:
-                report.issues.append(
-                    LintIssue(
-                        kind="stale",
-                        path=r.rel,
-                        message=f"not updated for {(now - dt).days} days",
-                    )
-                )
     return report
-
-
-def _parse_date(value: str) -> datetime:
-    """Parse common ISO date / datetime forms; assume UTC if naïve."""
-    for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S"):
-        try:
-            dt = datetime.strptime(value, fmt)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt
-        except ValueError:
-            continue
-    raise ValueError(f"unrecognised date format: {value!r}")
 
 
 def page_summary_dicts(items: list[PageSummary]) -> list[dict]:

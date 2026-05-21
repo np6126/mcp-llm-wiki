@@ -111,8 +111,9 @@ def build_server(config: Config) -> FastMCP:
         name="mcp-llm-wiki",
         instructions=(
             "Karpathy-style LLM wikis, git-backed. Pages live under "
-            "wiki/<page>.md, immutable sources under raw/. Writes are "
-            "ETag-guarded. Every wiki_save call also commits and pushes."
+            "wiki/<page>.md, immutable sources under raw/. wiki_save is "
+            "ETag-guarded when you pass the etag from wiki_read; every "
+            "wiki_save and wiki_log_append commits and pushes."
         ),
         host="0.0.0.0",  # noqa: S104 — container-bound, port closed by firewall
         port=config.port,
@@ -164,7 +165,7 @@ def build_server(config: Config) -> FastMCP:
         name="wiki_search",
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
         description=(
-            "Fixed-string search over wiki page bodies. Phase-1: "
+            "Fixed-string search over wiki pages. Phase-1: "
             "ripgrep-backed; FTS5 hybrid lands later."
         ),
     )
@@ -179,15 +180,18 @@ def build_server(config: Config) -> FastMCP:
         name="wiki_save",
         annotations=ToolAnnotations(
             readOnlyHint=False,
-            destructiveHint=False,
+            # An etag-less wiki_save replaces the page wholesale, so the
+            # tool *can* perform a destructive update — flag it honestly.
+            destructiveHint=True,
             idempotentHint=True,
             openWorldHint=False,
         ),
         description=(
             "Upsert a page. Sanitises content (HTML comments, zero-width, "
             "bidi, raw HTML, inline styles, data: images) before write. "
-            "If 'etag' is supplied and does not match the on-disk page, "
-            "the call fails so the agent can re-read and retry. "
+            "If 'etag' is supplied it must match the on-disk page or the "
+            "call fails (re-read and retry); without 'etag' the write is "
+            "unconditional and overwrites any current content. "
             "On success: atomic write, commit, push."
         ),
     )
@@ -241,8 +245,9 @@ def build_server(config: Config) -> FastMCP:
             openWorldHint=False,
         ),
         description=(
-            "Append one timestamped entry to log.md. Sanitises the entry "
-            "first. Commit + push, same as wiki_save."
+            "Append an entry to log.md as a '## [<UTC timestamp>] "
+            "<text>' heading line. Sanitises the entry first. Commit + "
+            "push, same as wiki_save."
         ),
     )
     def wiki_log_append(wiki: str, entry: str) -> dict[str, Any]:
@@ -253,8 +258,12 @@ def build_server(config: Config) -> FastMCP:
         if not cleaned:
             raise WikiToolError("empty_entry: log entry is empty after sanitisation")
 
+        # Format: `## [<ISO-8601 UTC>] <entry>` — a Markdown heading, per
+        # Karpathy's log convention. The bracketed timestamp sorts
+        # entries lexicographically; the log merge-driver keys on it.
+        # Author attribution is the git commit, not this line.
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        line = f"[{timestamp}] {config.agent_identity} | {cleaned}\n"
+        line = f"## [{timestamp}] {cleaned}\n"
 
         git_ops.pull_rebase(wiki_dir)
         log_path = wiki_dir / "log.md"
@@ -285,16 +294,16 @@ def build_server(config: Config) -> FastMCP:
         name="wiki_lint",
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
         description=(
-            "Heuristic drift report: orphan pages, broken wikilinks, "
-            "stale-by-age. Never mutates."
+            "Structural drift report: orphan pages, broken links, and "
+            "pages missing from index.md. Deterministic, never mutates. "
+            "Semantic checks — contradictions, superseded claims — are "
+            "the agent's job; see the wiki skill."
         ),
     )
-    def wiki_lint(wiki: str, stale_days: int = 180) -> dict[str, Any]:
+    def wiki_lint(wiki: str) -> dict[str, Any]:
         _require_known(config, wiki)
         _refresh(config, wiki)
-        return wiki_io.lint_report_dict(
-            wiki_io.lint(config.wiki_path(wiki), stale_days=stale_days)
-        )
+        return wiki_io.lint_report_dict(wiki_io.lint(config.wiki_path(wiki)))
 
     @mcp.tool(
         name="wiki_graph",

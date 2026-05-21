@@ -47,11 +47,13 @@ def wiki(tmp_path: Path) -> Path:
         "---\n"
         "title: Gitea\n"
         "kind: entity\n"
-        "updated: 2020-01-01\n"  # deliberately stale
+        "updated: 2020-01-01\n"
         "---\n"
         "Gitea is a git server. Standalone — no inbound link.\n"
     )
-    (wiki_dir / "wiki" / "index.md").write_text("# Index\n\n## Concepts\n- [[optimistic_concurrency]]\n")
+    (wiki_dir / "wiki" / "index.md").write_text(
+        "# Index\n\n## Concepts\n- [[optimistic_concurrency]]\n"
+    )
     (wiki_dir / "wiki" / "log.md").write_text("# Log\n\n")
     (wiki_dir / "raw" / "etag_paper.txt").write_text("RFC 7232 ETag definitions...")
     return wiki_dir
@@ -124,11 +126,24 @@ def test_build_graph(wiki):
     assert "wiki/index.md" in inbound
 
 
-def test_lint_reports_stale_page(wiki):
-    report = wiki_io.lint(wiki, stale_days=365)
-    stales = [i for i in report.issues if i.kind == "stale"]
-    paths = {i.path for i in stales}
-    assert "wiki/entities/gitea.md" in paths
+def test_lint_reports_unindexed_page(wiki):
+    # index.md lists only optimistic_concurrency; etag + gitea are not.
+    report = wiki_io.lint(wiki)
+    unindexed = {i.path for i in report.issues if i.kind == "unindexed"}
+    assert "wiki/entities/etag.md" in unindexed
+    assert "wiki/entities/gitea.md" in unindexed
+    assert "wiki/concepts/optimistic_concurrency.md" not in unindexed
+    # index.md and log.md are structural files — never flagged.
+    assert "wiki/index.md" not in unindexed
+    assert "wiki/log.md" not in unindexed
+
+
+def test_lint_skips_unindexed_when_index_absent(wiki):
+    # With no catalog there is nothing to check against — the absent
+    # index.md must not make every page report as unindexed.
+    (wiki / "wiki" / "index.md").unlink()
+    report = wiki_io.lint(wiki)
+    assert not [i for i in report.issues if i.kind == "unindexed"]
 
 
 def test_lint_reports_broken_link(wiki):
