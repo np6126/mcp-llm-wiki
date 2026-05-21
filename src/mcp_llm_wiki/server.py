@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import base64
 import logging
+import secrets
 import sys
 import threading
 import time
@@ -245,9 +246,9 @@ def build_server(config: Config) -> FastMCP:
             openWorldHint=False,
         ),
         description=(
-            "Append an entry to log.md as a '## [<UTC timestamp>] "
-            "<text>' heading line. Sanitises the entry first. Commit + "
-            "push, same as wiki_save."
+            "Append an entry to log.md as a '## [<UTC timestamp> "
+            "<nonce>] <text>' heading line. Sanitises the entry first. "
+            "Commit + push, same as wiki_save."
         ),
     )
     def wiki_log_append(wiki: str, entry: str) -> dict[str, Any]:
@@ -258,12 +259,18 @@ def build_server(config: Config) -> FastMCP:
         if not cleaned:
             raise WikiToolError("empty_entry: log entry is empty after sanitisation")
 
-        # Format: `## [<ISO-8601 UTC>] <entry>` — a Markdown heading, per
-        # Karpathy's log convention. The bracketed timestamp sorts
-        # entries lexicographically; the log merge-driver keys on it.
-        # Author attribution is the git commit, not this line.
+        # Format: `## [<ISO-8601 UTC> <nonce>] <entry>` — a Markdown
+        # heading, per Karpathy's log convention. The bracketed
+        # timestamp sorts entries lexicographically; the log
+        # merge-driver keys on it. Author attribution is the git
+        # commit, not this line.
+        #
+        # The random nonce makes two same-second, same-text appends
+        # from different VMs distinct: identical lines are identical
+        # commits, which git rebase silently drops as already-applied.
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        line = f"## [{timestamp}] {cleaned}\n"
+        nonce = secrets.token_hex(3)
+        line = f"## [{timestamp} {nonce}] {cleaned}\n"
 
         git_ops.pull_rebase(wiki_dir)
         log_path = wiki_dir / "log.md"

@@ -143,8 +143,11 @@ finds it deterministically:
 | `broken_link` | An outgoing link whose target page does not exist. |
 | `unindexed` | A content page not linked from `index.md`, the catalog. |
 
-(`index.md` and `log.md` are structural files, never flagged. The
-report is `{"issues": [{kind, path, message}, …], "clean": <bool>}`.)
+(`index.md` and `log.md` are exempt from the `orphan` and `unindexed`
+checks — they are structural, not content pages. A `broken_link` is
+still reported against `index.md`: the catalog is exactly where links
+to renamed-away pages collect. The report is `{"issues": [{kind,
+path, message}, …], "clean": <bool>}`.)
 
 **Semantic drift** — contradictions, claims a newer source has
 superseded, concepts mentioned but lacking their own page, missing
