@@ -114,14 +114,15 @@ def stage_commit_push(
     """Stage `paths`, commit if changed, push with retry on non-FF.
 
     Paths are relative to `wiki_dir`. `author` is the in-VM agent
-    identity; we render it as `name <name@gitea.local>` for the
-    commit-author header (Gitea's UI keys on email).
+    identity; we render it as `name <name@llm-wiki.local>` for the
+    commit-author header (git hosting web UIs key author identity on
+    email).
     """
     _run(["git", "add", "--", *paths], wiki_dir)
     if not _index_dirty(wiki_dir, paths):
         return CommitResult(committed=False, commit_sha=None, pushed=False)
 
-    author_token = f"{author} <{author}@gitea.local>"
+    author_token = f"{author} <{author}@llm-wiki.local>"
     _run(
         ["git", "commit", f"--author={author_token}", "-m", message],
         wiki_dir,

@@ -210,9 +210,32 @@ async def test_concurrent_log_appends_merge(two_vms):
     log_text = _run(["git", "show", "main:log.md"], bare).stdout
     assert "source-A" in log_text
     assert "source-B" in log_text
-    # Both authored under their respective VM identities.
-    assert "wiki-bot-vmA" in log_text
-    assert "wiki-bot-vmB" in log_text
+    # The merge driver sorts entries by their ISO timestamp; A was
+    # appended before B, so A's line precedes B's.
+    assert log_text.index("source-A") < log_text.index("source-B")
+
+
+@pytest.mark.asyncio
+async def test_concurrent_identical_log_appends_both_survive(two_vms):
+    """Both VMs append a log entry with byte-identical text. The
+    per-entry nonce keeps the two lines distinct, so neither commit
+    looks like a cherry-pick of the other and both appends survive the
+    rebase. Without the nonce the lines would be identical, git would
+    drop one commit as an already-applied patch, and one append would
+    be silently lost.
+    """
+    vm_a, vm_b, bare = two_vms
+
+    await _call(vm_a, "wiki_log_append", wiki="test", entry="ingest | same source")
+    await _call(vm_b, "wiki_log_append", wiki="test", entry="ingest | same source")
+
+    log_text = _run(["git", "show", "main:log.md"], bare).stdout
+    entry_lines = [ln for ln in log_text.splitlines() if ln.startswith("## [")]
+    # Both appends present — neither dropped as a duplicate patch.
+    assert len(entry_lines) == 2
+    # Same entry text, distinct lines: the nonce is what differs.
+    assert entry_lines[0] != entry_lines[1]
+    assert all(ln.endswith("ingest | same source") for ln in entry_lines)
 
 
 @pytest.mark.asyncio

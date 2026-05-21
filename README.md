@@ -4,8 +4,8 @@ A git-backed [MCP](https://modelcontextprotocol.io/) server that exposes
 Karpathy's [LLM-Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
 as a tool surface for AI coding agents.
 
-Wikis are plain Markdown stored in Git repositories (typically a Gitea
-instance). One git repo = one wiki. Multiple agent VMs and humans can
+Wikis are plain Markdown stored in Git repositories. One git repo =
+one wiki. Multiple agent VMs and humans can
 read/write the same wiki concurrently; conflicts are mediated by ETag
 optimistic concurrency plus custom merge-drivers for the two
 write-contended hotspots (`log.md`, `index.md`).
@@ -31,16 +31,19 @@ talks to it over HTTP-MCP and never touches the working trees directly.
 
 ## Tools
 
-| Tool | Read-only | Purpose |
+| Tool | Mode | Purpose |
 |---|---|---|
-| `wiki_list` | ✓ | List pages with frontmatter summary |
-| `wiki_read` | ✓ | Read a page (returns content + frontmatter + outgoing links + ETag) |
-| `wiki_read_raw` | ✓ | Read from the immutable `raw/` source layer |
-| `wiki_search` | ✓ | Fixed-string search over page bodies (ripgrep-backed; FTS5 hybrid planned) |
-| `wiki_save` | idempotent | Upsert a page; atomic write + commit + push, ETag-guarded |
-| `wiki_log_append` | non-idempotent | Append a timestamped entry to `log.md` |
-| `wiki_lint` | ✓ | Heuristics-only drift report (orphans, broken links, stale-by-age) — never mutates |
-| `wiki_graph` | ✓ | Backlinks map (parses wikilinks + Markdown links) |
+| `wiki_list` | read-only | List pages with frontmatter summary |
+| `wiki_read` | read-only | Read a page (returns content + frontmatter + outgoing links + ETag) |
+| `wiki_read_raw` | read-only | Read from the immutable `raw/` source layer |
+| `wiki_search` | read-only | Fixed-string search over wiki pages (ripgrep-backed; FTS5 hybrid planned) |
+| `wiki_save` | write (idempotent) | Upsert a page; atomic write + commit + push, ETag-guarded |
+| `wiki_log_append` | write (append) | Append a timestamped entry to `log.md` |
+| `wiki_lint` | read-only | Structural drift report (orphans, broken links, unindexed pages) — never mutates |
+| `wiki_graph` | read-only | Backlinks map (parses wikilinks + Markdown links) |
+
+These tools are primitives. The *workflows* that compose them — ingest,
+query, and lint — live in the agent's skill, not the server.
 
 ## Setting up a wiki
 
@@ -104,8 +107,8 @@ wiki-clip path/to/wiki-repo https://example.com/some/page
 
 It fetches the URL, converts the HTML to Markdown with
 [markitdown](https://github.com/microsoft/markitdown), and writes
-`raw/<slug>.md` with provenance frontmatter (`source_url`, `title`,
-`fetched`). It then `git add`s the file but does **not** commit — the
+`raw/<slug>.md` with provenance frontmatter (`source_url`, `title`, `fetched`,
+`clipped_by`). It then `git add`s the file but does **not** commit — the
 operator reviews the clipped Markdown and commits, keeping `raw/` a
 curated layer. `--name` overrides the filename stem.
 
@@ -121,6 +124,42 @@ up on its next read: reads refresh the working tree with a
 TTL-debounced `git pull --rebase`. Wikilinks (`[[page]]`) render
 natively in Obsidian and in VS Code with Foam; most git-host web views
 show them as plain text.
+
+## Linting
+
+Linting is the maintenance cycle that keeps a wiki from rotting: find
+the drift, then fix it. The fix is the point — a lint that only reports
+has done half the job.
+
+Detection has two layers, because drift comes in two kinds.
+
+**Structural drift** — pages nothing links to, links to pages renamed
+away, pages missing from the catalog — is graph topology. `wiki_lint`
+finds it deterministically:
+
+| Kind | Meaning |
+|---|---|
+| `orphan` | A content page no other page links to. |
+| `broken_link` | An outgoing link whose target page does not exist. |
+| `unindexed` | A content page not linked from `index.md`, the catalog. |
+
+(`index.md` and `log.md` are exempt from the `orphan` and `unindexed`
+checks — they are structural, not content pages. A `broken_link` is
+still reported against `index.md`: the catalog is exactly where links
+to renamed-away pages collect. The report is `{"issues": [{kind,
+path, message}, …], "clean": <bool>}`.)
+
+**Semantic drift** — contradictions, claims a newer source has
+superseded, concepts mentioned but lacking their own page, missing
+cross-references — cannot be computed; it takes an agent reading and
+judging the content.
+
+The agent then **remedies** each finding with `wiki_save` — relink an
+orphan, stub or drop a broken link, add a page to `index.md`, rewrite a
+superseded claim. `wiki_lint` is read-only by design: a fix is a
+content change and belongs in `wiki_save` (sanitiser, ETag, commit),
+with the agent deciding *how*. The full detect-and-remedy loop is the
+agent's *Lint* operation, defined in the wiki skill.
 
 ## Status
 
