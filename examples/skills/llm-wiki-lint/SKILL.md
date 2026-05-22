@@ -1,19 +1,21 @@
 ---
 name: llm-wiki-lint
 description: >-
-  Use to health-check a wiki for drift — run wiki_lint, read backlinks
-  with wiki_graph, judge the semantic drift the linter cannot, and
-  remedy each finding with wiki_save. The Lint operation of the
-  llm-wiki skill set; read the llm-wiki skill first for the wiki model
-  and conventions.
+  Use to health-check a wiki — run wiki_lint, read backlinks with
+  wiki_graph, judge the semantic drift the linter cannot, remedy each
+  finding with wiki_save, and surface coverage gaps for the operator.
+  The Lint operation of the llm-wiki skill set; read the llm-wiki skill
+  first for the wiki model and conventions.
 ---
 
 # llm-wiki — Lint
 
-Keep the wiki from rotting: find the drift, then fix it. A lint that
-only reports has done half the job — the fix is the point. Run it at
-the end of any substantive ingest session, and periodically otherwise.
-The wiki model and conventions live in the `llm-wiki` skill.
+Keep the wiki healthy as it grows: find the drift and fix it, then
+surface what is missing. A lint that only reports has done half the
+job — the fix is the point (§3) — and a healthy wiki also means
+knowing what it still lacks (§4). Run it at the end of any substantive
+ingest session, and periodically otherwise. The wiki model and
+conventions live in the `llm-wiki` skill.
 
 ## 1. Mechanical drift — `wiki_lint`
 
@@ -66,5 +68,16 @@ its `etag` (see `llm-wiki` › Concurrency).
 | `source_missing` | Re-derive the page from the surviving sources or a replacement; drop the dead `sources:` entry. |
 | `source_drift` | Re-read the source with `wiki_read_raw`, reconcile the page, update the entry's `etag`. |
 | semantic | Rewrite the superseded claim; add the missing page or cross-reference. |
+
+## 4. Gaps and next directions
+
+Drift is what the wiki got *wrong*; gaps are what it is *missing*. The
+same pass surfaces them — report these to the operator rather than
+acting on them yourself, since sourcing stays the operator's job:
+
+- thin spots — a topic the wiki only touches in passing that a web
+  search or a new source could fill out;
+- new questions the current pages raise but do not answer;
+- sources worth seeking out to deepen or challenge the synthesis.
 
 Log a substantive lint pass: `wiki_log_append` → `lint | <what changed>`.
