@@ -12,3 +12,5 @@ dist/
 *.db-journal
 .coverage
 htmlcov/
+.claude/settings.local.json
+plans/

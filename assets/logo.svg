@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160" role="img" aria-label="mcp-llm-wiki logo">
+  <title>mcp-llm-wiki</title>
+  <desc>A Markdown page with a folded corner holding a small graph of three linked knowledge nodes.</desc>
+  <!-- Single mid-tone accent: legible on white and on dark grey. -->
+  <g fill="none" stroke="#2f7e8c" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Page body, with the top-right corner folded down -->
+    <path d="M36 22 H102 L126 46 V138 H36 Z"/>
+    <!-- The folded corner -->
+    <path d="M102 22 V46 H126"/>
+    <!-- Knowledge graph: three linked nodes inside the page -->
+    <line x1="60" y1="86" x2="98" y2="74"/>
+    <line x1="60" y1="86" x2="88" y2="116"/>
+    <line x1="98" y1="74" x2="88" y2="116"/>
+  </g>
+  <g fill="#2f7e8c">
+    <circle cx="60" cy="86" r="10"/>
+    <circle cx="98" cy="74" r="10"/>
+    <circle cx="88" cy="116" r="10"/>
+  </g>
+</svg>

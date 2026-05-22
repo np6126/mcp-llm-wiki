@@ -1,29 +1,64 @@
+<div align="center">
+
+<img src="assets/logo.svg" alt="mcp-llm-wiki logo" width="140" height="140">
+
 # mcp-llm-wiki
 
-A git-backed [MCP](https://modelcontextprotocol.io/) server that exposes
-Karpathy's [LLM-Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
-as a tool surface for AI coding agents.
+A durable, shared knowledge layer for AI coding agents — a git-backed
+[MCP](https://modelcontextprotocol.io/) server that exposes Karpathy's
+[LLM-Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
+as a tool surface.
 
-Wikis are plain Markdown stored in Git repositories. One git repo =
-one wiki. Multiple agent VMs and humans can
-read/write the same wiki concurrently; conflicts are mediated by ETag
-optimistic concurrency plus custom merge-drivers for the two
-write-contended hotspots (`log.md`, `index.md`).
+<p>
+  <img src="https://img.shields.io/badge/license-MIT-2f7e8c" alt="License: MIT">
+  <img src="https://img.shields.io/badge/protocol-MCP-2f7e8c" alt="Protocol: MCP">
+  <img src="https://img.shields.io/badge/python-3.10%2B-2f7e8c" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/status-pre--1.0-9a6b00" alt="Status: pre-1.0">
+</p>
+
+</div>
+
+---
+
+**Contents** &nbsp;·&nbsp;
+[Design](#design) &nbsp;·&nbsp;
+[Tools](#tools) &nbsp;·&nbsp;
+[Companion skills](#companion-skills) &nbsp;·&nbsp;
+[Operator CLIs](#operator-clis) &nbsp;·&nbsp;
+[Setting up a wiki](#setting-up-a-wiki) &nbsp;·&nbsp;
+[Clipping web sources](#clipping-web-sources-into-raw) &nbsp;·&nbsp;
+[Editing by hand](#editing-a-wiki-by-hand) &nbsp;·&nbsp;
+[Linting](#linting) &nbsp;·&nbsp;
+[Status](#status) &nbsp;·&nbsp;
+[Integration](#integration) &nbsp;·&nbsp;
+[License](#license)
+
+---
+
+Your agents read and write a persistent Markdown wiki that compounds
+over time. Each wiki is plain
+Markdown stored in a Git repository — one git repo, one wiki — so the
+knowledge is versioned, reviewable, and editable by hand. Multiple agent
+VMs and humans can read/write the same wiki concurrently; conflicts are
+mediated by ETag optimistic concurrency plus custom merge-drivers for the
+two write-contended hotspots (`log.md`, `index.md`).
 
 The server runs in its own container, isolated from the agent. The agent
 talks to it over HTTP-MCP and never touches the working trees directly.
 
 ## Design
 
-- **Persistent, compounding artifact, not RAG.** Wiki pages are
-  pre-synthesised Markdown, owned by the LLM agent layer.
+- **Persistent, compounding artifact.** Wiki pages are pre-synthesised
+  Markdown, owned by the LLM agent layer — knowledge that accumulates
+  across sessions, where RAG retrieves chunks fresh at query time.
 - **Git as the source of truth.** Working trees in the container are
   ephemeral; the canonical bare repos live on the git host. Every write
   pushes; reads refresh the working tree with a TTL-debounced
   `git pull --rebase`.
 - **Schema-blind.** The server validates nothing about page structure;
-  conventions live in the agent's `SKILL.md`. The server's job is
-  filesystem primitives + git mediation + safety.
+  conventions live in the agent's skills (see [Companion
+  skills](#companion-skills)). The server's job is filesystem
+  primitives + git mediation + safety.
 - **Safety first.** All writes pass through a paranoid Markdown
   sanitiser (HTML comments, zero-width chars, bidi overrides, raw HTML,
   inline-style CSS, `data:` images). Path operations always go through
@@ -42,8 +77,30 @@ talks to it over HTTP-MCP and never touches the working trees directly.
 | `wiki_lint` | read-only | Drift report (orphans, broken links, unindexed pages, removed/changed sources) — never mutates |
 | `wiki_graph` | read-only | Backlinks map (parses wikilinks + Markdown links) |
 
-These tools are primitives. The *workflows* that compose them — ingest,
-query, and lint — live in the agent's skill, not the server.
+These tools are primitives. The *operations* that compose them —
+ingest, query, and lint — are agent workflows; see [Companion
+skills](#companion-skills).
+
+## Companion skills
+
+The Ingest, Query, and Lint operations ship in this repo as [Agent
+Skills](https://code.claude.com/docs/en/skills) under
+[`examples/skills/`](examples/skills/):
+
+| Skill | Role |
+|---|---|
+| `llm-wiki` | Foundation — the wiki model, the eight tools, and the page-kind, naming, frontmatter, linking, and ETag-concurrency conventions. |
+| `llm-wiki-ingest` | Ingest — turn a new `raw/` source into wiki pages. |
+| `llm-wiki-query` | Query — answer a question from the wiki; optionally file the answer back. |
+| `llm-wiki-lint` | Lint — health-check the wiki for drift and remedy it. |
+
+The server does not load these — it is schema-blind and exposes only
+tools. The skills belong to the *consuming* agent: copy the four
+directories into the agent's skills directory (for Claude Code,
+`~/.claude/skills/` or a project's `.claude/skills/`). The agent then
+loads `llm-wiki` for the conventions and the matching operation skill
+when it ingests, queries, or lints. Keep the copies in sync with this
+repo — the server's tool surface is what they document.
 
 ## Operator CLIs
 
@@ -200,7 +257,8 @@ re-synthesise a page whose source was removed or changed, rewrite a
 superseded claim. `wiki_lint` is read-only by design: a fix is a
 content change and belongs in `wiki_save` (sanitiser, ETag, commit),
 with the agent deciding *how*. The full detect-and-remedy loop is the
-agent's *Lint* operation, defined in the wiki skill.
+agent's *Lint* operation, defined in the `llm-wiki-lint` skill (see
+[Companion skills](#companion-skills)).
 
 ## Status
 

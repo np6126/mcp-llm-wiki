@@ -325,7 +325,7 @@ def build_server(config: Config) -> FastMCP:
             "removed (source_missing) or changed (source_drift). "
             "Deterministic, never mutates. Semantic checks — "
             "contradictions, superseded claims — are the agent's job; "
-            "see the wiki skill."
+            "see the llm-wiki-lint skill."
         ),
     )
     def wiki_lint(wiki: str) -> dict[str, Any]:

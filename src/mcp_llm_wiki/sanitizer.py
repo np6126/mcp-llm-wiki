@@ -16,7 +16,7 @@ when sanitisation kicked in.
 
 Tightly bounded by design: we don't try to make a Markdown safe-renderer
 out of this. We strip known-bad shapes and let the rest pass through.
-The agent's `SKILL.md` and the in-VM `CLAUDE.md` disclaimer carry the
+The agent's wiki skills and the in-VM `CLAUDE.md` disclaimer carry the
 rest of the trust story.
 """
 
